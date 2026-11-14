@@ -471,6 +471,7 @@ function tangentAt(p) {
 function makeCritter(kind, p, base) {
   return { kind, p: norm(p), h: tangentAt(norm(p)), base, speed: 0, face: 1, phase: 0, jump: 0, vj: 0, state: 'wander', timer: 1 + Math.random() * 2, wturn: 0, target: null };
 }
+const house = { p: norm([-0.15, 0.74, 0.65]) };
 const boy = makeCritter('boy', BOY_VIEW, 0.5);
 const dog = makeCritter('dog', norm([0.35, 0.75, 0.56]), 0.52);
 const cat = makeCritter('cat', norm([-0.38, 0.7, 0.6]), 0.44);
@@ -578,6 +579,7 @@ function plant() {
     const p = [r * Math.cos(a), y, r * Math.sin(a)];
     const e = heightAt(p[0], p[1], p[2]) - SEA;
     if (e < 0.02 || e > 0.095) continue;
+    if (angleBetween(p, house.p) < 0.16) continue;
     if (trees.length < 9 && seeded() < 0.1) trees.push({ p, s: 0.8 + seeded() * 0.5, ph: seeded() * 10 });
     else if (flowers.length < 80) flowers.push({ p, col: FLOWER_COLORS[Math.floor(seeded() * FLOWER_COLORS.length)], type: seeded() < 0.3 ? 1 : 0, s: 0.75 + seeded() * 0.6, ph: seeded() * 10 });
   }
@@ -610,6 +612,204 @@ function drawTree(tr, t) {
   ctx.fillStyle = '#2f9d58'; circ(-0.17 + sw, -0.58, 0.22); circ(0.18 + sw, -0.6, 0.21);
   ctx.fillStyle = '#43b96a'; circ(sw * 1.5, -0.8, 0.27);
   ctx.fillStyle = 'rgba(255,255,255,0.18)'; circ(-0.08 + sw * 1.5, -0.88, 0.1);
+}
+
+function drawHouse(h, t) {
+  // 1. 부드러운 지면 그림자
+  ctx.fillStyle = 'rgba(15, 30, 45, 0.28)';
+  ell(0, 0.02, 0.58, 0.12);
+
+  // 2. 집 앞마당 디딤돌
+  ctx.fillStyle = '#bda891';
+  ell(-0.02, 0.04, 0.09, 0.04);
+  ell(0.08, 0.07, 0.07, 0.035);
+  ell(-0.11, 0.08, 0.06, 0.03);
+
+  // 3. 본체 기단
+  ctx.fillStyle = '#b39c82';
+  ctx.fillRect(-0.34, -0.06, 0.68, 0.06);
+
+  // 4. 벽체 본체 (따스한 크림색 스투코 외벽)
+  const wg = ctx.createLinearGradient(-0.33, -0.6, 0.33, 0);
+  wg.addColorStop(0, '#fffcf5');
+  wg.addColorStop(0.5, '#faedd9');
+  wg.addColorStop(1, '#ebd7bf');
+  ctx.fillStyle = wg;
+  ctx.fillRect(-0.33, -0.54, 0.66, 0.48);
+
+  // 모퉁이 원목 기둥 & 가로 보
+  ctx.fillStyle = '#9b714b';
+  ctx.fillRect(-0.34, -0.54, 0.04, 0.54);
+  ctx.fillRect(0.3, -0.54, 0.04, 0.54);
+  ctx.fillRect(-0.34, -0.54, 0.68, 0.035);
+
+  // 5. 원목 아치형 문
+  ctx.save();
+  ctx.translate(-0.13, 0);
+  ctx.fillStyle = '#7a4b2c';
+  ctx.beginPath();
+  ctx.moveTo(-0.11, 0); ctx.lineTo(-0.11, -0.27);
+  ctx.arc(0, -0.27, 0.11, Math.PI, 0);
+  ctx.lineTo(0.11, 0); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#a66d43';
+  ctx.beginPath();
+  ctx.moveTo(-0.09, 0); ctx.lineTo(-0.09, -0.27);
+  ctx.arc(0, -0.27, 0.09, Math.PI, 0);
+  ctx.lineTo(0.09, 0); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#6e3f20'; ctx.lineWidth = 0.015;
+  line(-0.03, -0.34, -0.03, 0);
+  line(0.03, -0.34, 0.03, 0);
+  ctx.fillStyle = '#ffd166'; circ(0.055, -0.15, 0.022);
+  ctx.fillStyle = '#4a2810'; circ(0.055, -0.15, 0.009);
+  ctx.restore();
+
+  // 문 옆 벽걸이 등불
+  const lampGlow = 0.8 + 0.2 * Math.sin(t * 3.5);
+  ctx.strokeStyle = '#3a2518'; ctx.lineWidth = 0.018;
+  line(-0.25, -0.32, -0.21, -0.35);
+  line(-0.21, -0.35, -0.21, -0.3);
+  ctx.fillStyle = `rgba(255, 215, 80, ${(0.35 * lampGlow).toFixed(2)})`; circ(-0.21, -0.27, 0.08);
+  ctx.fillStyle = '#ffe066'; circ(-0.21, -0.27, 0.025);
+
+  // 6. 앞 창문 (따스한 호박색 불빛 창문 + 꽃상자)
+  ctx.save();
+  ctx.translate(0.14, -0.28);
+  ctx.fillStyle = '#7a4b2c';
+  ctx.beginPath(); ctx.arc(0, 0, 0.105, 0, TAU); ctx.fill();
+  const lg = ctx.createRadialGradient(0, 0, 0, 0, 0, 0.085);
+  lg.addColorStop(0, '#ffffff');
+  lg.addColorStop(0.5, '#ffe57f');
+  lg.addColorStop(1, '#f7b05b');
+  ctx.fillStyle = lg;
+  ctx.beginPath(); ctx.arc(0, 0, 0.085, 0, TAU); ctx.fill();
+  ctx.strokeStyle = '#6e3f20'; ctx.lineWidth = 0.016;
+  line(-0.085, 0, 0.085, 0); line(0, -0.085, 0, 0.085);
+  ctx.fillStyle = '#8a5a35'; ctx.fillRect(-0.11, 0.09, 0.22, 0.05);
+  ctx.fillStyle = '#3ca354';
+  circ(-0.08, 0.08, 0.025); circ(-0.03, 0.075, 0.028); circ(0.03, 0.078, 0.026); circ(0.08, 0.08, 0.025);
+  ctx.fillStyle = '#ff6b8b'; circ(-0.07, 0.07, 0.018);
+  ctx.fillStyle = '#ffd166'; circ(0, 0.065, 0.018);
+  ctx.fillStyle = '#ff8fa3'; circ(0.07, 0.07, 0.018);
+  ctx.restore();
+
+  // 7. 상단 박공벽 & 다락방 작은 둥근 창
+  ctx.fillStyle = '#faedd9';
+  ctx.beginPath();
+  ctx.moveTo(-0.33, -0.54);
+  ctx.lineTo(0, -0.84);
+  ctx.lineTo(0.33, -0.54);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#7a4b2c'; circ(0, -0.63, 0.055);
+  ctx.fillStyle = '#fff099'; circ(0, -0.63, 0.04);
+  ctx.strokeStyle = '#6e3f20'; ctx.lineWidth = 0.012;
+  line(-0.04, -0.63, 0.04, -0.63); line(0, -0.67, 0, -0.59);
+
+  // 8. 굴뚝과 별빛 연기
+  ctx.save();
+  ctx.translate(0.18, -0.68);
+  ctx.fillStyle = '#a17a5e'; ctx.fillRect(0, -0.22, 0.09, 0.26);
+  ctx.fillStyle = '#7d583f'; ctx.fillRect(-0.015, -0.25, 0.12, 0.035);
+  ctx.strokeStyle = '#6a4730'; ctx.lineWidth = 0.01;
+  line(0, -0.15, 0.09, -0.15); line(0, -0.07, 0.09, -0.07);
+  line(0.045, -0.22, 0.045, -0.15); line(0.045, -0.07, 0.045, 0);
+
+  for (let i = 0; i < 4; i++) {
+    const p = frac(t * 0.35 + i * 0.25);
+    const py = -0.26 - p * 0.45;
+    const px = 0.045 + Math.sin(t * 1.8 + i * 2) * 0.04 * p;
+    const pr = 0.03 + p * 0.065;
+    const alpha = (Math.sin(p * Math.PI) * 0.55).toFixed(2);
+    ctx.fillStyle = `rgba(255, 248, 230, ${alpha})`;
+    circ(px, py, pr);
+    if (p > 0.25 && p < 0.75) {
+      ctx.fillStyle = `rgba(255, 220, 100, ${alpha})`;
+      circ(px, py, 0.012);
+    }
+  }
+  ctx.restore();
+
+  // 9. 동화풍 곡선형 테라코타 지붕
+  const rg = ctx.createLinearGradient(-0.4, -0.9, 0.4, -0.5);
+  rg.addColorStop(0, '#f27663');
+  rg.addColorStop(0.35, '#e05340');
+  rg.addColorStop(1, '#be3827');
+  ctx.fillStyle = rg;
+
+  ctx.beginPath();
+  ctx.moveTo(0, -0.88);
+  ctx.quadraticCurveTo(0.2, -0.78, 0.39, -0.52);
+  ctx.lineTo(-0.39, -0.52);
+  ctx.quadraticCurveTo(-0.2, -0.78, 0, -0.88);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(60, 20, 15, 0.22)';
+  ctx.fillRect(-0.34, -0.54, 0.68, 0.03);
+
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.26)';
+  ctx.lineWidth = 0.015;
+  for (let r = 1; r <= 3; r++) {
+    const k = r / 4;
+    const y1 = lerp(-0.84, -0.53, k);
+    const w1 = lerp(0.08, 0.35, k);
+    ctx.beginPath();
+    ctx.moveTo(-w1, y1);
+    ctx.quadraticCurveTo(0, y1 + 0.02, w1, y1);
+    ctx.stroke();
+  }
+
+  // 10. 지붕 꼭대기 어린왕자의 황금별
+  ctx.save();
+  ctx.translate(0, -0.88);
+  ctx.strokeStyle = '#ffd166'; ctx.lineWidth = 0.018; line(0, 0, 0, -0.1);
+  ctx.translate(0, -0.11);
+  const starPulse = 0.85 + 0.22 * Math.sin(t * 3.2);
+  ctx.scale(starPulse, starPulse);
+  ctx.fillStyle = 'rgba(255, 230, 120, 0.38)'; circ(0, 0, 0.08);
+  ctx.fillStyle = '#ffcf3a';
+  ctx.beginPath();
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * TAU - Math.PI / 2;
+    const r = i % 2 ? 0.025 : 0.065;
+    ctx[i ? 'lineTo' : 'moveTo'](Math.cos(a) * r, Math.sin(a) * r);
+  }
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+
+  // 11. 어린왕자의 상징: 유리 돔 속의 붉은 장미
+  ctx.save();
+  ctx.translate(0.44, 0);
+  ctx.fillStyle = '#8a5a35'; ctx.fillRect(-0.06, -0.09, 0.12, 0.09);
+  ctx.fillStyle = '#6e4425'; ctx.fillRect(-0.07, -0.11, 0.14, 0.025);
+  ctx.strokeStyle = '#2f8f46'; ctx.lineWidth = 0.016;
+  ctx.beginPath(); ctx.moveTo(0, -0.11); ctx.quadraticCurveTo(0.02, -0.17, 0, -0.21); ctx.stroke();
+  ctx.fillStyle = '#3fa652'; ell(0.025, -0.16, 0.02, 0.009);
+  ctx.fillStyle = '#ff2b4e'; circ(0, -0.22, 0.028);
+  ctx.fillStyle = '#ff5470'; circ(0.008, -0.225, 0.018);
+  ctx.fillStyle = '#ffd166'; circ(0, -0.22, 0.007);
+  ctx.fillStyle = 'rgba(210, 240, 255, 0.28)';
+  ctx.beginPath();
+  ctx.moveTo(-0.05, -0.11); ctx.lineTo(-0.05, -0.24);
+  ctx.arc(0, -0.24, 0.05, Math.PI, 0);
+  ctx.lineTo(0.05, -0.11); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(235, 250, 255, 0.75)'; ctx.lineWidth = 0.014; ctx.stroke();
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)'; ctx.lineWidth = 0.012;
+  ctx.beginPath(); ctx.arc(0, -0.24, 0.04, Math.PI * 1.15, Math.PI * 1.55); ctx.stroke();
+  ctx.fillStyle = 'rgba(230, 245, 255, 0.9)'; circ(0, -0.3, 0.012);
+  ctx.restore();
+
+  // 12. 집 좌측 B-612 푯말
+  ctx.save();
+  ctx.translate(-0.43, 0);
+  ctx.strokeStyle = '#8a5a35'; ctx.lineWidth = 0.022; line(0, 0, 0, -0.18);
+  ctx.fillStyle = '#e8d5b5'; ctx.fillRect(-0.08, -0.24, 0.16, 0.08);
+  ctx.strokeStyle = '#997350'; ctx.lineWidth = 0.01; ctx.strokeRect(-0.08, -0.24, 0.16, 0.08);
+  ctx.font = 'bold 0.045px sans-serif';
+  ctx.fillStyle = '#6a472d';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('B-612', 0, -0.2);
+  ctx.restore();
 }
 
 function drawBoy(c, t) {
@@ -744,6 +944,7 @@ function drawGlobeScene(t, dt) {
   };
   for (const f of flowers) add(f.p, R * 0.085 * f.s, drawFlower, f);
   for (const tr of trees) add(tr.p, R * 0.3 * tr.s, drawTree, tr);
+  add(house.p, R * 0.45, drawHouse, house);
   add(cat.p, R * 0.3, drawCat, cat);
   add(dog.p, R * 0.33, drawDog, dog);
   add(boy.p, R * 0.4, drawBoy, boy);
@@ -774,6 +975,20 @@ function worldUpdate(dt, t) {
   boyUpdate(dt, t);
   animalUpdate(dog, dt);
   animalUpdate(cat, dt);
+  // 집 주변을 지나갈 때 부드럽게 돌아가도록 거리 유지
+  for (const c of [boy, dog, cat]) {
+    const gap = angleBetween(c.p, house.p);
+    if (gap < 0.16) {
+      const k = dot(c.p, house.p);
+      let away = [c.p[0] - k * house.p[0], c.p[1] - k * house.p[1], c.p[2] - k * house.p[2]];
+      if (Math.hypot(away[0], away[1], away[2]) < 1e-4) away = c.h;
+      away = norm(away);
+      const push = (0.16 - gap) * Math.min(1, dt * 5);
+      c.p = norm([c.p[0] + away[0] * push, c.p[1] + away[1] * push, c.p[2] + away[2] * push]);
+      const d = dot(c.h, c.p);
+      c.h = norm([c.h[0] - d * c.p[0], c.h[1] - d * c.p[1], c.h[2] - d * c.p[2]]);
+    }
+  }
   for (const c of [boy, dog, cat]) {
     const hv = mulMV(M, c.h);
     if (c.speed > 0.02 && Math.abs(hv[0]) > 0.18) c.face = hv[0] > 0 ? 1 : -1;
