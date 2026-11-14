@@ -471,8 +471,57 @@ function tangentAt(p) {
 function makeCritter(kind, p, base) {
   return { kind, p: norm(p), h: tangentAt(norm(p)), base, speed: 0, face: 1, phase: 0, jump: 0, vj: 0, state: 'wander', timer: 1 + Math.random() * 2, wturn: 0, target: null };
 }
-const house = { p: norm([-0.15, 0.74, 0.65]) };
+const HOUSE_ANG = 4.0;
+const house = {
+  p: norm([-0.15, 0.74, 0.65]),
+  doorOpen: 0,
+  targetDoor: 0
+};
+
+function getHouseBasis() {
+  const up = house.p;
+  const r0 = tangentAt(up);
+  const f0 = cross(up, r0);
+  const c = Math.cos(HOUSE_ANG), s = Math.sin(HOUSE_ANG);
+  const right = norm([r0[0] * c + f0[0] * s, r0[1] * c + f0[1] * s, r0[2] * c + f0[2] * s]);
+  const fwd = norm(cross(up, right));
+  return { up, right, fwd };
+}
+
+function getDoorPos() {
+  const { up, right, fwd } = getHouseBasis();
+  const scale = 0.44;
+  return norm([
+    house.p[0] + (-0.05 * right[0] + 0.02 * up[0] + 0.24 * fwd[0]) * scale,
+    house.p[1] + (-0.05 * right[1] + 0.02 * up[1] + 0.24 * fwd[1]) * scale,
+    house.p[2] + (-0.05 * right[2] + 0.02 * up[2] + 0.24 * fwd[2]) * scale
+  ]);
+}
+
+function shadeColor(col, factor) {
+  if (typeof col !== 'string' || col[0] !== '#') return col;
+  let r = 0, g = 0, b = 0;
+  if (col.length === 7) {
+    r = parseInt(col.slice(1, 3), 16);
+    g = parseInt(col.slice(3, 5), 16);
+    b = parseInt(col.slice(5, 7), 16);
+  } else if (col.length === 4) {
+    r = parseInt(col[1] + col[1], 16);
+    g = parseInt(col[2] + col[2], 16);
+    b = parseInt(col[3] + col[3], 16);
+  } else return col;
+  r = clamp(Math.round(r * factor), 0, 255);
+  g = clamp(Math.round(g * factor), 0, 255);
+  b = clamp(Math.round(b * factor), 0, 255);
+  return `rgb(${r},${g},${b})`;
+}
+
 const boy = makeCritter('boy', BOY_VIEW, 0.5);
+boy.homeState = 'outside';
+boy.homeTimer = 22;
+boy.enterT = 0;
+boy.insideTimer = 0;
+boy.exitT = 0;
 const dog = makeCritter('dog', norm([0.35, 0.75, 0.56]), 0.52);
 const cat = makeCritter('cat', norm([-0.38, 0.7, 0.6]), 0.44);
 boy.state = 'run'; boy.timer = 3;
@@ -514,23 +563,119 @@ let aiMode = true, lastInput = -99;
 function boyUpdate(dt, t) {
   const kx = (keys.has('ArrowRight') ? 1 : 0) - (keys.has('ArrowLeft') ? 1 : 0);
   const ky = (keys.has('ArrowUp') ? 1 : 0) - (keys.has('ArrowDown') ? 1 : 0);
+  const doorPos = getDoorPos();
+  const distDoor = angleBetween(boy.p, doorPos);
+
+  // 1. 어린왕자가 집 안에 있을 때
+  if (boy.homeState === 'inside') {
+    boy.speed = 0;
+    house.targetDoor = 0;
+    boy.p = doorPos; // 문 안쪽에 위치
+    // 방향키나 스페이스바를 누르면 바로 문을 열고 밖으로 나옴
+    if (kx || ky || keys.has('Jump')) {
+      lastInput = t;
+      boy.homeState = 'exiting';
+      boy.exitT = 0;
+      house.targetDoor = 1;
+    } else {
+      boy.insideTimer -= dt;
+      if (boy.insideTimer <= 0) {
+        boy.homeState = 'exiting';
+        boy.exitT = 0;
+        house.targetDoor = 1;
+      }
+    }
+    return;
+  }
+
+  // 2. 어린왕자가 문을 열고 들어가는 중
+  if (boy.homeState === 'entering') {
+    house.targetDoor = 1;
+    steerTo(boy, doorPos, 6 * dt);
+    boy.speed = 0.22;
+    boy.enterT += dt * 1.5;
+    if (boy.enterT >= 1 || distDoor < 0.045) {
+      boy.homeState = 'inside';
+      boy.insideTimer = 4.2; // 방 안에서 아늑하게 쉬는 시간
+      house.targetDoor = 0;
+      boy.speed = 0;
+    }
+    stepMove(boy, dt);
+    return;
+  }
+
+  // 3. 어린왕자가 문을 열고 나오는 중
+  if (boy.homeState === 'exiting') {
+    house.targetDoor = 1;
+    boy.exitT += dt * 1.5;
+    const { fwd } = getHouseBasis();
+    boy.h = fwd;
+    boy.speed = 0.35;
+    stepMove(boy, dt);
+    if (boy.exitT >= 1) {
+      boy.homeState = 'outside';
+      boy.homeTimer = 24 + Math.random() * 15;
+      house.targetDoor = 0;
+      hop(boy, 1.9); // 상쾌하게 밖으로 나오며 점프!
+    }
+    return;
+  }
+
+  // 4. 사용자 직접 조작
   if (kx || ky) {
     lastInput = t;
+    boy.homeState = 'outside';
     const vB = mulMV(M, boy.p);
     let d = [kx, ky * 0.35, -ky];
     const k = dot(d, vB);
     d = norm([d[0] - k * vB[0], d[1] - k * vB[1], d[2] - k * vB[2]]);
     boy.h = mulMTV(M, d);
     boy.speed = 0.58;
-  } else if (aiMode && t - lastInput > 2.2) {
-    boy.timer -= dt;
-    if (boy.timer <= 0) {
-      if (boy.state === 'run' && Math.random() < 0.45) { boy.state = 'idle'; boy.timer = 0.7 + Math.random() * 1.6; }
-      else { boy.state = 'run'; boy.timer = 2.5 + Math.random() * 4; boy.wturn = (Math.random() - 0.5) * 2.4; }
-      if (Math.random() < 0.4) hop(boy, 1.9);
+
+    // 문 가까이 접근하면 문이 자동으로 열림
+    if (distDoor < 0.15) {
+      house.targetDoor = 1;
+      if (distDoor < 0.055) {
+        boy.homeState = 'inside';
+        boy.insideTimer = 99999; // 수동 모드에서는 키를 누를 때까지 편안히 머뭄
+        house.targetDoor = 0;
+        boy.speed = 0;
+        toast('어린왕자가 집에 들어왔어요! 방향키나 점프 버튼으로 나갈 수 있어요.');
+        return;
+      }
+    } else {
+      house.targetDoor = 0;
     }
-    if (boy.state === 'run') { wander(boy, dt, 5); boy.speed = boy.base; } else boy.speed = 0;
-  } else boy.speed = 0;
+  } else if (aiMode && t - lastInput > 2.2) {
+    // 5. AI 자율 행동 모드
+    boy.homeTimer -= dt;
+    if (boy.homeTimer <= 0 && boy.homeState === 'outside') {
+      boy.homeState = 'going_home';
+    }
+
+    if (boy.homeState === 'going_home') {
+      steerTo(boy, doorPos, 5 * dt);
+      boy.speed = boy.base * 0.9;
+      if (distDoor < 0.16) house.targetDoor = 1;
+      if (distDoor < 0.065) {
+        boy.homeState = 'entering';
+        boy.enterT = 0;
+        house.targetDoor = 1;
+      }
+    } else {
+      boy.timer -= dt;
+      if (boy.timer <= 0) {
+        if (boy.state === 'run' && Math.random() < 0.45) { boy.state = 'idle'; boy.timer = 0.7 + Math.random() * 1.6; }
+        else { boy.state = 'run'; boy.timer = 2.5 + Math.random() * 4; boy.wturn = (Math.random() - 0.5) * 2.4; }
+        if (Math.random() < 0.4) hop(boy, 1.9);
+      }
+      if (boy.state === 'run') { wander(boy, dt, 5); boy.speed = boy.base; } else boy.speed = 0;
+      house.targetDoor = 0;
+    }
+  } else {
+    boy.speed = 0;
+    house.targetDoor = 0;
+  }
   stepMove(boy, dt);
 }
 
@@ -544,24 +689,57 @@ function animalUpdate(c, dt) {
     else { c.state = 'idle'; c.timer = 1 + Math.random() * (c.kind === 'cat' ? 3.5 : 2); }
     if (Math.random() < 0.35) hop(c, 1.7);
   }
+
+  // 강아지와 고양이가 마주쳤을 때 다리가 떨리는 현상 방지:
+  // 가까워지면 서로를 향해 충돌하지 않고 자연스럽게 멈춰 인사하거나 바라보도록 유도
+  const gapAnimals = angleBetween(dog.p, cat.p);
+  if (gapAnimals < 0.26) {
+    if (c.kind === 'cat' && c.state === 'chase' && c.target === dog) {
+      c.state = 'idle';
+      c.timer = 1.4 + Math.random();
+      c.speed = 0;
+    } else if (c.kind === 'dog' && c.state === 'chase' && c.target === cat) {
+      c.state = 'idle';
+      c.timer = 1.4 + Math.random();
+      c.speed = 0;
+      if (Math.random() < 0.3) hop(dog, 1.5);
+    }
+  }
+
   const far = angleBetween(c.p, boy.p);
-  if (far > LEASH) { steerTo(c, boy.p, 5 * dt); c.speed = Math.max(c.base * 1.5, 0.72); }
-  else if (c.state === 'wander') { wander(c, dt, 6); c.speed = c.base; }
-  else if (c.state === 'chase') {
-    if (angleBetween(c.p, c.target.p) < 0.24) { c.state = 'idle'; c.timer = 0.8 + Math.random() * 1.4; c.speed = 0; if (Math.random() < 0.6) hop(c, 1.6); }
-    else { steerTo(c, c.target.p, 5 * dt); c.speed = c.base * 1.35; }
-  } else c.speed = 0;
+  if (far > LEASH && boy.homeState !== 'inside') {
+    steerTo(c, boy.p, 5 * dt);
+    c.speed = Math.max(c.base * 1.5, 0.72);
+  } else if (c.state === 'wander') {
+    wander(c, dt, 6);
+    c.speed = c.base;
+  } else if (c.state === 'chase') {
+    if (angleBetween(c.p, c.target.p) < 0.26) {
+      c.state = 'idle';
+      c.timer = 1.0 + Math.random() * 1.4;
+      c.speed = 0;
+      if (Math.random() < 0.6) hop(c, 1.6);
+    } else {
+      steerTo(c, c.target.p, 5 * dt);
+      c.speed = c.base * 1.25;
+    }
+  } else {
+    c.speed = 0;
+  }
+
   stepMove(c, dt);
-  // 서로 겹쳐 서지 않도록 살짝 밀어낸다
+
+  // 서로 겹쳐 서지 않도록 부드럽게 밀어냄 (충돌 시 진동 방지를 위해 감쇠 적용)
   for (const o of [boy, dog, cat]) {
     if (o === c) continue;
+    if (o === boy && boy.homeState === 'inside') continue; // 집 안의 아이와는 충돌 안 함
     const gap = angleBetween(c.p, o.p);
-    if (gap < 0.2) {
+    if (gap < 0.22) {
       const k = dot(c.p, o.p);
       let away = [c.p[0] - k * o.p[0], c.p[1] - k * o.p[1], c.p[2] - k * o.p[2]];
       if (Math.hypot(away[0], away[1], away[2]) < 1e-4) away = c.h;
       away = norm(away);
-      const push = (0.2 - gap) * Math.min(1, dt * 6);
+      const push = (0.22 - gap) * Math.min(0.4, dt * 2.8);
       c.p = norm([c.p[0] + away[0] * push, c.p[1] + away[1] * push, c.p[2] + away[2] * push]);
       const d = dot(c.h, c.p);
       c.h = norm([c.h[0] - d * c.p[0], c.h[1] - d * c.p[1], c.h[2] - d * c.p[2]]);
@@ -614,210 +792,365 @@ function drawTree(tr, t) {
   ctx.fillStyle = 'rgba(255,255,255,0.18)'; circ(-0.08 + sw * 1.5, -0.88, 0.1);
 }
 
-function drawHouse(h, t) {
-  // 1. 부드러운 지면 그림자
-  ctx.fillStyle = 'rgba(15, 30, 45, 0.28)';
-  ell(0, 0.02, 0.58, 0.12);
+function drawHouse3D(t, dt) {
+  const R = view.R, cx = view.cx, cy = view.cy + Math.sin(t * 0.8) * R * 0.02;
+  const v_origin = mulMV(M, house.p);
+  if (v_origin[2] < -0.45) return;
 
-  // 2. 집 앞마당 디딤돌
-  ctx.fillStyle = '#bda891';
-  ell(-0.02, 0.04, 0.09, 0.04);
-  ell(0.08, 0.07, 0.07, 0.035);
-  ell(-0.11, 0.08, 0.06, 0.03);
+  const { up, right, fwd } = getHouseBasis();
+  const v_right = mulMV(M, right);
+  const v_up = mulMV(M, up);
+  const v_fwd = mulMV(M, fwd);
+  const scale = 0.44;
 
-  // 3. 본체 기단
-  ctx.fillStyle = '#b39c82';
-  ctx.fillRect(-0.34, -0.06, 0.68, 0.06);
+  function pt(lx, ly, lz) {
+    const vx = v_origin[0] + (lx * v_right[0] + ly * v_up[0] + lz * v_fwd[0]) * scale;
+    const vy = v_origin[1] + (lx * v_right[1] + ly * v_up[1] + lz * v_fwd[1]) * scale;
+    const vz = v_origin[2] + (lx * v_right[2] + ly * v_up[2] + lz * v_fwd[2]) * scale;
+    return { x: cx + vx * R, y: cy - vy * R, z: vz };
+  }
 
-  // 4. 벽체 본체 (따스한 크림색 스투코 외벽)
-  const wg = ctx.createLinearGradient(-0.33, -0.6, 0.33, 0);
-  wg.addColorStop(0, '#fffcf5');
-  wg.addColorStop(0.5, '#faedd9');
-  wg.addColorStop(1, '#ebd7bf');
-  ctx.fillStyle = wg;
-  ctx.fillRect(-0.33, -0.54, 0.66, 0.48);
+  function drawFace(pts, baseCol, normalVec, strokeCol, strokeWidth) {
+    let col = baseCol;
+    if (normalVec) {
+      const v_norm = mulMV(M, normalVec);
+      if (v_norm[2] < -0.18) return false;
+      const diff = Math.max(0, dot(v_norm, LIGHT));
+      const shade = 0.62 + 0.38 * diff;
+      col = shadeColor(baseCol, shade);
+    }
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.closePath();
+    ctx.fillStyle = col;
+    ctx.fill();
+    if (strokeCol) {
+      ctx.strokeStyle = strokeCol;
+      ctx.lineWidth = strokeWidth || 1;
+      ctx.stroke();
+    }
+    return true;
+  }
 
-  // 모퉁이 원목 기둥 & 가로 보
-  ctx.fillStyle = '#9b714b';
-  ctx.fillRect(-0.34, -0.54, 0.04, 0.54);
-  ctx.fillRect(0.3, -0.54, 0.04, 0.54);
-  ctx.fillRect(-0.34, -0.54, 0.68, 0.035);
+  house.doorOpen += (house.targetDoor - house.doorOpen) * Math.min(1, dt * 5.5);
 
-  // 5. 원목 아치형 문
-  ctx.save();
-  ctx.translate(-0.13, 0);
-  ctx.fillStyle = '#7a4b2c';
+  const hw = 0.26, hd = 0.22, wh = 0.40, rh = 0.72, ov = 0.035;
+
+  // 1. 바닥 그림자
+  const p0 = pt(-hw * 1.3, 0.01, -hd * 1.3);
+  const p1 = pt(hw * 1.3, 0.01, -hd * 1.3);
+  const p2 = pt(hw * 1.3, 0.01, hd * 1.4);
+  const p3 = pt(-hw * 1.3, 0.01, hd * 1.4);
+  ctx.fillStyle = 'rgba(12, 28, 45, 0.26)';
   ctx.beginPath();
-  ctx.moveTo(-0.11, 0); ctx.lineTo(-0.11, -0.27);
-  ctx.arc(0, -0.27, 0.11, Math.PI, 0);
-  ctx.lineTo(0.11, 0); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = '#a66d43';
+  ctx.moveTo(p0.x, p0.y); ctx.lineTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.lineTo(p3.x, p3.y);
+  ctx.closePath(); ctx.fill();
+
+  // 2. 디딤돌
+  const ds0 = pt(-0.16, 0.01, hd + 0.02);
+  const ds1 = pt(0.04, 0.01, hd + 0.02);
+  const ds2 = pt(0.03, 0.01, hd + 0.12);
+  const ds3 = pt(-0.15, 0.01, hd + 0.12);
+  drawFace([ds0, ds1, ds2, ds3], '#bfa98e', up, '#8e7962', 0.8);
+
+  // 3. 기단
+  const fb0 = pt(-hw - 0.015, -0.04, hd + 0.015);
+  const fb1 = pt(hw + 0.015, -0.04, hd + 0.015);
+  const fb2 = pt(hw + 0.015, 0.03, hd + 0.015);
+  const fb3 = pt(-hw - 0.015, 0.03, hd + 0.015);
+  drawFace([fb0, fb1, fb2, fb3], '#b49d84', fwd);
+
+  const rb0 = pt(hw + 0.015, -0.04, hd + 0.015);
+  const rb1 = pt(hw + 0.015, -0.04, -hd - 0.015);
+  const rb2 = pt(hw + 0.015, 0.03, -hd - 0.015);
+  const rb3 = pt(hw + 0.015, 0.03, hd + 0.015);
+  drawFace([rb0, rb1, rb2, rb3], '#9e8770', right);
+
+  const lb0 = pt(-hw - 0.015, -0.04, -hd - 0.015);
+  const lb1 = pt(-hw - 0.015, -0.04, hd + 0.015);
+  const lb2 = pt(-hw - 0.015, 0.03, hd + 0.015);
+  const lb3 = pt(-hw - 0.015, 0.03, -hd - 0.015);
+  drawFace([lb0, lb1, lb2, lb3], '#8d7762', [-right[0], -right[1], -right[2]]);
+
+  // 4. 벽체
+  const wL0 = pt(-hw, 0.03, -hd);
+  const wL1 = pt(-hw, 0.03, hd);
+  const wL2 = pt(-hw, wh, hd);
+  const wL3 = pt(-hw, wh, -hd);
+  drawFace([wL0, wL1, wL2, wL3], '#e2cfb7', [-right[0], -right[1], -right[2]], '#9f7e5d', 1);
+
+  const wR0 = pt(hw, 0.03, hd);
+  const wR1 = pt(hw, 0.03, -hd);
+  const wR2 = pt(hw, wh, -hd);
+  const wR3 = pt(hw, wh, hd);
+  drawFace([wR0, wR1, wR2, wR3], '#faecd8', right, '#a58667', 1);
+
+  const wB0 = pt(hw, 0.03, -hd);
+  const wB1 = pt(-hw, 0.03, -hd);
+  const wB2 = pt(-hw, wh, -hd);
+  const wB3 = pt(0, rh, -hd);
+  const wB4 = pt(hw, wh, -hd);
+  drawFace([wB0, wB1, wB2, wB3, wB4], '#d5c0a8', [-fwd[0], -fwd[1], -fwd[2]], '#997b5f', 1);
+
+  const wF0 = pt(-hw, 0.03, hd);
+  const wF1 = pt(hw, 0.03, hd);
+  const wF2 = pt(hw, wh, hd);
+  const wF3 = pt(0, rh, hd);
+  const wF4 = pt(-hw, wh, hd);
+  drawFace([wF0, wF1, wF2, wF3, wF4], '#fff7ea', fwd, '#a58667', 1.2);
+
+  const cL0 = pt(-hw, 0.03, hd); const cL1 = pt(-hw + 0.035, 0.03, hd);
+  const cL2 = pt(-hw + 0.035, wh, hd); const cL3 = pt(-hw, wh, hd);
+  drawFace([cL0, cL1, cL2, cL3], '#8f643e', fwd);
+
+  const cR0 = pt(hw - 0.035, 0.03, hd); const cR1 = pt(hw, 0.03, hd);
+  const cR2 = pt(hw, wh, hd); const cR3 = pt(hw - 0.035, wh, hd);
+  drawFace([cR0, cR1, cR2, cR3], '#8f643e', fwd);
+
+  // 5. 문 & 내부 조명
+  const dwL = -0.15, dwR = 0.01, dh = 0.28;
+  const d0 = pt(dwL, 0.03, hd + 0.002);
+  const d1 = pt(dwR, 0.03, hd + 0.002);
+  const d2 = pt(dwR, dh, hd + 0.002);
+  const d3 = pt(dwL, dh, hd + 0.002);
+
+  if (house.doorOpen > 0.02) {
+    const gl0 = pt(dwL, 0.02, hd + 0.01);
+    const gl1 = pt(dwR, 0.02, hd + 0.01);
+    const gl2 = pt(dwR + 0.12 * house.doorOpen, 0.02, hd + 0.22 * house.doorOpen);
+    const gl3 = pt(dwL - 0.06 * house.doorOpen, 0.02, hd + 0.22 * house.doorOpen);
+    const lg = ctx.createLinearGradient(gl0.x, gl0.y, gl2.x, gl2.y);
+    lg.addColorStop(0, `rgba(255, 235, 120, ${(0.65 * house.doorOpen).toFixed(2)})`);
+    lg.addColorStop(1, `rgba(255, 210, 80, 0)`);
+    ctx.fillStyle = lg;
+    ctx.beginPath();
+    ctx.moveTo(gl0.x, gl0.y); ctx.lineTo(gl1.x, gl1.y); ctx.lineTo(gl2.x, gl2.y); ctx.lineTo(gl3.x, gl3.y);
+    ctx.closePath(); ctx.fill();
+  }
+
+  ctx.fillStyle = '#3a200f';
   ctx.beginPath();
-  ctx.moveTo(-0.09, 0); ctx.lineTo(-0.09, -0.27);
-  ctx.arc(0, -0.27, 0.09, Math.PI, 0);
-  ctx.lineTo(0.09, 0); ctx.closePath(); ctx.fill();
-  ctx.strokeStyle = '#6e3f20'; ctx.lineWidth = 0.015;
-  line(-0.03, -0.34, -0.03, 0);
-  line(0.03, -0.34, 0.03, 0);
-  ctx.fillStyle = '#ffd166'; circ(0.055, -0.15, 0.022);
-  ctx.fillStyle = '#4a2810'; circ(0.055, -0.15, 0.009);
-  ctx.restore();
+  ctx.moveTo(d0.x, d0.y); ctx.lineTo(d1.x, d1.y); ctx.lineTo(d2.x, d2.y); ctx.lineTo(d3.x, d3.y);
+  ctx.closePath(); ctx.fill();
 
-  // 문 옆 벽걸이 등불
-  const lampGlow = 0.8 + 0.2 * Math.sin(t * 3.5);
-  ctx.strokeStyle = '#3a2518'; ctx.lineWidth = 0.018;
-  line(-0.25, -0.32, -0.21, -0.35);
-  line(-0.21, -0.35, -0.21, -0.3);
-  ctx.fillStyle = `rgba(255, 215, 80, ${(0.35 * lampGlow).toFixed(2)})`; circ(-0.21, -0.27, 0.08);
-  ctx.fillStyle = '#ffe066'; circ(-0.21, -0.27, 0.025);
-
-  // 6. 앞 창문 (따스한 호박색 불빛 창문 + 꽃상자)
-  ctx.save();
-  ctx.translate(0.14, -0.28);
-  ctx.fillStyle = '#7a4b2c';
-  ctx.beginPath(); ctx.arc(0, 0, 0.105, 0, TAU); ctx.fill();
-  const lg = ctx.createRadialGradient(0, 0, 0, 0, 0, 0.085);
-  lg.addColorStop(0, '#ffffff');
-  lg.addColorStop(0.5, '#ffe57f');
-  lg.addColorStop(1, '#f7b05b');
-  ctx.fillStyle = lg;
-  ctx.beginPath(); ctx.arc(0, 0, 0.085, 0, TAU); ctx.fill();
-  ctx.strokeStyle = '#6e3f20'; ctx.lineWidth = 0.016;
-  line(-0.085, 0, 0.085, 0); line(0, -0.085, 0, 0.085);
-  ctx.fillStyle = '#8a5a35'; ctx.fillRect(-0.11, 0.09, 0.22, 0.05);
-  ctx.fillStyle = '#3ca354';
-  circ(-0.08, 0.08, 0.025); circ(-0.03, 0.075, 0.028); circ(0.03, 0.078, 0.026); circ(0.08, 0.08, 0.025);
-  ctx.fillStyle = '#ff6b8b'; circ(-0.07, 0.07, 0.018);
-  ctx.fillStyle = '#ffd166'; circ(0, 0.065, 0.018);
-  ctx.fillStyle = '#ff8fa3'; circ(0.07, 0.07, 0.018);
-  ctx.restore();
-
-  // 7. 상단 박공벽 & 다락방 작은 둥근 창
-  ctx.fillStyle = '#faedd9';
-  ctx.beginPath();
-  ctx.moveTo(-0.33, -0.54);
-  ctx.lineTo(0, -0.84);
-  ctx.lineTo(0.33, -0.54);
-  ctx.closePath();
+  const innerG = ctx.createRadialGradient((d0.x + d1.x) / 2, (d0.y + d2.y) / 2, 2, (d0.x + d1.x) / 2, (d0.y + d2.y) / 2, Math.abs(d1.x - d0.x) * 1.6);
+  innerG.addColorStop(0, `rgba(255, 240, 160, ${0.9 * house.doorOpen + (1 - house.doorOpen) * 0.12})`);
+  innerG.addColorStop(0.7, `rgba(245, 160, 60, ${0.7 * house.doorOpen})`);
+  innerG.addColorStop(1, 'rgba(40, 20, 10, 0.95)');
+  ctx.fillStyle = innerG;
   ctx.fill();
-  ctx.fillStyle = '#7a4b2c'; circ(0, -0.63, 0.055);
-  ctx.fillStyle = '#fff099'; circ(0, -0.63, 0.04);
-  ctx.strokeStyle = '#6e3f20'; ctx.lineWidth = 0.012;
-  line(-0.04, -0.63, 0.04, -0.63); line(0, -0.67, 0, -0.59);
 
-  // 8. 굴뚝과 별빛 연기
-  ctx.save();
-  ctx.translate(0.18, -0.68);
-  ctx.fillStyle = '#a17a5e'; ctx.fillRect(0, -0.22, 0.09, 0.26);
-  ctx.fillStyle = '#7d583f'; ctx.fillRect(-0.015, -0.25, 0.12, 0.035);
-  ctx.strokeStyle = '#6a4730'; ctx.lineWidth = 0.01;
-  line(0, -0.15, 0.09, -0.15); line(0, -0.07, 0.09, -0.07);
-  line(0.045, -0.22, 0.045, -0.15); line(0.045, -0.07, 0.045, 0);
+  // 3D 문짝
+  const doorAngle = house.doorOpen * (Math.PI * 0.48);
+  const dw = dwR - dwL;
+  const dpx = dwL + dw * Math.cos(doorAngle);
+  const dpz = hd - dw * Math.sin(doorAngle);
+
+  const dp0 = pt(dwL, 0.03, hd);
+  const dp1 = pt(dpx, 0.03, dpz);
+  const dp2 = pt(dpx, dh, dpz);
+  const dp3 = pt(dwL, dh, hd);
+  drawFace([dp0, dp1, dp2, dp3], '#a76f45', fwd, '#60391d', 1.2);
+
+  const hx = dwL + dw * 0.85 * Math.cos(doorAngle);
+  const hz = hd - dw * 0.85 * Math.sin(doorAngle);
+  const knob = pt(hx, 0.14, hz);
+  ctx.fillStyle = '#ffcf3a';
+  circ(knob.x, knob.y, clamp(R * 0.009, 2, 4.5));
+
+  // 문 옆 등불
+  const lnp = pt(dwL - 0.05, 0.22, hd + 0.02);
+  const lampGlow = 0.8 + 0.2 * Math.sin(t * 3.5);
+  ctx.fillStyle = `rgba(255, 215, 80, ${(0.4 * lampGlow).toFixed(2)})`;
+  circ(lnp.x, lnp.y, clamp(R * 0.03, 6, 14));
+  ctx.fillStyle = '#ffe066';
+  circ(lnp.x, lnp.y, clamp(R * 0.01, 2.5, 5));
+
+  // 6. 전면 창문
+  const win0 = pt(0.08, 0.13, hd + 0.002);
+  const win1 = pt(0.20, 0.13, hd + 0.002);
+  const win2 = pt(0.20, 0.27, hd + 0.002);
+  const win3 = pt(0.08, 0.27, hd + 0.002);
+
+  const boyInside = boy.homeState === 'inside';
+  const winPulse = boyInside ? 0.95 + 0.25 * Math.sin(t * 4.5) : 0.8 + 0.15 * Math.sin(t * 2);
+  const wg = ctx.createRadialGradient((win0.x + win1.x) / 2, (win0.y + win2.y) / 2, 1, (win0.x + win1.x) / 2, (win0.y + win2.y) / 2, Math.abs(win1.x - win0.x));
+  wg.addColorStop(0, '#ffffff');
+  wg.addColorStop(0.4, `rgba(255, 235, 120, ${winPulse.toFixed(2)})`);
+  wg.addColorStop(1, '#f59e0b');
+  drawFace([win0, win1, win2, win3], wg, fwd, '#60391d', 1.2);
+
+  const wMidX0 = pt(0.14, 0.13, hd + 0.003);
+  const wMidX1 = pt(0.14, 0.27, hd + 0.003);
+  const wMidY0 = pt(0.08, 0.20, hd + 0.003);
+  const wMidY1 = pt(0.20, 0.20, hd + 0.003);
+  ctx.strokeStyle = '#60391d'; ctx.lineWidth = 1;
+  line(wMidX0.x, wMidX0.y, wMidX1.x, wMidX1.y);
+  line(wMidY0.x, wMidY0.y, wMidY1.x, wMidY1.y);
+
+  // 창문 꽃상자
+  const fbP0 = pt(0.07, 0.08, hd + 0.04);
+  const fbP1 = pt(0.21, 0.08, hd + 0.04);
+  const fbP2 = pt(0.21, 0.13, hd + 0.04);
+  const fbP3 = pt(0.07, 0.13, hd + 0.04);
+  drawFace([fbP0, fbP1, fbP2, fbP3], '#8a5a35', fwd, '#50351d', 1);
+  for (let i = 0; i < 4; i++) {
+    const fx = 0.085 + i * 0.035;
+    const fp = pt(fx, 0.135, hd + 0.04);
+    ctx.fillStyle = i % 2 ? '#ff6b8b' : '#ffd166';
+    circ(fp.x, fp.y, clamp(R * 0.008, 1.8, 3.5));
+  }
+
+  // 다락방 원형 창문
+  const atticP = pt(0, 0.52, hd + 0.002);
+  const atticR = clamp(R * 0.02, 4, 9);
+  ctx.fillStyle = '#60391d'; circ(atticP.x, atticP.y, atticR);
+  ctx.fillStyle = '#ffe57f'; circ(atticP.x, atticP.y, atticR * 0.75);
+  ctx.strokeStyle = '#60391d'; ctx.lineWidth = 0.8;
+  line(atticP.x - atticR * 0.75, atticP.y, atticP.x + atticR * 0.75, atticP.y);
+  line(atticP.x, atticP.y - atticR * 0.75, atticP.x, atticP.y + atticR * 0.75);
+
+  // 7. 3D 지붕
+  const nRoofR = norm([up[0] * 0.7 + right[0] * 0.7, up[1] * 0.7 + right[1] * 0.7, up[2] * 0.7 + right[2] * 0.7]);
+  const nRoofL = norm([up[0] * 0.7 - right[0] * 0.7, up[1] * 0.7 - right[1] * 0.7, up[2] * 0.7 - right[2] * 0.7]);
+
+  const rR0 = pt(0, rh + ov * 0.8, hd + ov);
+  const rR1 = pt(hw + ov, wh - ov * 0.4, hd + ov);
+  const rR2 = pt(hw + ov, wh - ov * 0.4, -hd - ov);
+  const rR3 = pt(0, rh + ov * 0.8, -hd - ov);
+  drawFace([rR0, rR1, rR2, rR3], '#f06d57', nRoofR, '#9e3223', 1.2);
+
+  const rL0 = pt(0, rh + ov * 0.8, -hd - ov);
+  const rL1 = pt(-hw - ov, wh - ov * 0.4, -hd - ov);
+  const rL2 = pt(-hw - ov, wh - ov * 0.4, hd + ov);
+  const rL3 = pt(0, rh + ov * 0.8, hd + ov);
+  drawFace([rL0, rL1, rL2, rL3], '#d44936', nRoofL, '#852518', 1.2);
+
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)'; ctx.lineWidth = 1;
+  for (let k = 1; k <= 3; k++) {
+    const f = k / 4;
+    const s0 = pt(lerp(0, hw + ov, f), lerp(rh, wh, f), hd + ov);
+    const s1 = pt(lerp(0, hw + ov, f), lerp(rh, wh, f), -hd - ov);
+    line(s0.x, s0.y, s1.x, s1.y);
+  }
+
+  // 8. 굴뚝 및 별빛 연기
+  const chX0 = 0.11, chX1 = 0.20, chZ0 = -0.05, chZ1 = 0.05, chY1 = 0.78;
+  const chF0 = pt(chX0, 0.50, chZ1);
+  const chF1 = pt(chX1, 0.50, chZ1);
+  const chF2 = pt(chX1, chY1, chZ1);
+  const chF3 = pt(chX0, chY1, chZ1);
+  drawFace([chF0, chF1, chF2, chF3], '#a37b5e', fwd, '#60412b', 0.8);
+
+  const chR0 = pt(chX1, 0.50, chZ1);
+  const chR1 = pt(chX1, 0.50, chZ0);
+  const chR2 = pt(chX1, chY1, chZ0);
+  const chR3 = pt(chX1, chY1, chZ1);
+  drawFace([chR0, chR1, chR2, chR3], '#8e684c', right, '#60412b', 0.8);
+
+  const chT0 = pt(chX0 - 0.015, chY1, chZ1 + 0.015);
+  const chT1 = pt(chX1 + 0.015, chY1, chZ1 + 0.015);
+  const chT2 = pt(chX1 + 0.015, chY1, chZ0 - 0.015);
+  const chT3 = pt(chX0 - 0.015, chY1, chZ0 - 0.015);
+  drawFace([chT0, chT1, chT2, chT3], '#725139', up);
 
   for (let i = 0; i < 4; i++) {
-    const p = frac(t * 0.35 + i * 0.25);
-    const py = -0.26 - p * 0.45;
-    const px = 0.045 + Math.sin(t * 1.8 + i * 2) * 0.04 * p;
-    const pr = 0.03 + p * 0.065;
+    const p = frac(t * 0.3 + i * 0.25);
+    const smY = chY1 + 0.04 + p * 0.48;
+    const smX = 0.155 + Math.sin(t * 2 + i * 1.5) * 0.04 * p;
+    const smZ = Math.cos(t * 1.8 + i) * 0.03 * p;
+    const smPt = pt(smX, smY, smZ);
+    const smR = (0.025 + p * 0.065) * R * scale;
     const alpha = (Math.sin(p * Math.PI) * 0.55).toFixed(2);
     ctx.fillStyle = `rgba(255, 248, 230, ${alpha})`;
-    circ(px, py, pr);
-    if (p > 0.25 && p < 0.75) {
+    circ(smPt.x, smPt.y, smR);
+    if (p > 0.2 && p < 0.75) {
       ctx.fillStyle = `rgba(255, 220, 100, ${alpha})`;
-      circ(px, py, 0.012);
+      circ(smPt.x, smPt.y, smR * 0.35);
     }
   }
-  ctx.restore();
 
-  // 9. 동화풍 곡선형 테라코타 지붕
-  const rg = ctx.createLinearGradient(-0.4, -0.9, 0.4, -0.5);
-  rg.addColorStop(0, '#f27663');
-  rg.addColorStop(0.35, '#e05340');
-  rg.addColorStop(1, '#be3827');
-  ctx.fillStyle = rg;
-
-  ctx.beginPath();
-  ctx.moveTo(0, -0.88);
-  ctx.quadraticCurveTo(0.2, -0.78, 0.39, -0.52);
-  ctx.lineTo(-0.39, -0.52);
-  ctx.quadraticCurveTo(-0.2, -0.78, 0, -0.88);
-  ctx.closePath();
-  ctx.fill();
-
-  ctx.fillStyle = 'rgba(60, 20, 15, 0.22)';
-  ctx.fillRect(-0.34, -0.54, 0.68, 0.03);
-
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.26)';
-  ctx.lineWidth = 0.015;
-  for (let r = 1; r <= 3; r++) {
-    const k = r / 4;
-    const y1 = lerp(-0.84, -0.53, k);
-    const w1 = lerp(0.08, 0.35, k);
-    ctx.beginPath();
-    ctx.moveTo(-w1, y1);
-    ctx.quadraticCurveTo(0, y1 + 0.02, w1, y1);
-    ctx.stroke();
+  if (boyInside) {
+    for (let i = 0; i < 2; i++) {
+      const p = frac(t * 0.4 + i * 0.5);
+      const noteY = 0.45 + p * 0.4;
+      const notePt = pt(0.14 + Math.sin(t * 3 + i) * 0.05, noteY, hd + 0.05);
+      ctx.font = `${Math.round(clamp(R * 0.04, 12, 22))}px sans-serif`;
+      ctx.fillStyle = `rgba(255, 120, 160, ${(1 - p).toFixed(2)})`;
+      ctx.fillText(i % 2 ? '♥' : '♪', notePt.x, notePt.y);
+    }
   }
 
-  // 10. 지붕 꼭대기 어린왕자의 황금별
-  ctx.save();
-  ctx.translate(0, -0.88);
-  ctx.strokeStyle = '#ffd166'; ctx.lineWidth = 0.018; line(0, 0, 0, -0.1);
-  ctx.translate(0, -0.11);
-  const starPulse = 0.85 + 0.22 * Math.sin(t * 3.2);
-  ctx.scale(starPulse, starPulse);
-  ctx.fillStyle = 'rgba(255, 230, 120, 0.38)'; circ(0, 0, 0.08);
+  // 9. 지붕 꼭대기 황금별
+  const starBase = pt(0, rh + ov, 0);
+  const starTop = pt(0, rh + ov + 0.13, 0);
+  ctx.strokeStyle = '#ffcf3a'; ctx.lineWidth = 1.6;
+  line(starBase.x, starBase.y, starTop.x, starTop.y);
+
+  const starPulse = 0.85 + 0.25 * Math.sin(t * 3.5);
+  const sR = clamp(R * 0.02 * starPulse, 4, 10);
+  ctx.fillStyle = 'rgba(255, 230, 120, 0.4)'; circ(starTop.x, starTop.y, sR * 2);
   ctx.fillStyle = '#ffcf3a';
   ctx.beginPath();
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * TAU - Math.PI / 2;
-    const r = i % 2 ? 0.025 : 0.065;
-    ctx[i ? 'lineTo' : 'moveTo'](Math.cos(a) * r, Math.sin(a) * r);
+    const r = i % 2 ? sR * 0.4 : sR;
+    ctx[i ? 'lineTo' : 'moveTo'](starTop.x + Math.cos(a) * r, starTop.y + Math.sin(a) * r);
   }
   ctx.closePath(); ctx.fill();
-  ctx.restore();
 
-  // 11. 어린왕자의 상징: 유리 돔 속의 붉은 장미
-  ctx.save();
-  ctx.translate(0.44, 0);
-  ctx.fillStyle = '#8a5a35'; ctx.fillRect(-0.06, -0.09, 0.12, 0.09);
-  ctx.fillStyle = '#6e4425'; ctx.fillRect(-0.07, -0.11, 0.14, 0.025);
-  ctx.strokeStyle = '#2f8f46'; ctx.lineWidth = 0.016;
-  ctx.beginPath(); ctx.moveTo(0, -0.11); ctx.quadraticCurveTo(0.02, -0.17, 0, -0.21); ctx.stroke();
-  ctx.fillStyle = '#3fa652'; ell(0.025, -0.16, 0.02, 0.009);
-  ctx.fillStyle = '#ff2b4e'; circ(0, -0.22, 0.028);
-  ctx.fillStyle = '#ff5470'; circ(0.008, -0.225, 0.018);
-  ctx.fillStyle = '#ffd166'; circ(0, -0.22, 0.007);
-  ctx.fillStyle = 'rgba(210, 240, 255, 0.28)';
+  // 10. 유리 돔 속 붉은 장미
+  const roseStand = pt(hw + 0.14, 0, 0.04);
+  const rW = clamp(R * 0.035, 7, 16);
+  ctx.fillStyle = '#8a5a35';
+  ctx.fillRect(roseStand.x - rW * 0.45, roseStand.y - rW * 0.5, rW * 0.9, rW * 0.5);
+  ctx.strokeStyle = '#2f8f46'; ctx.lineWidth = 1.4;
+  line(roseStand.x, roseStand.y - rW * 0.5, roseStand.x, roseStand.y - rW * 0.9);
+  ctx.fillStyle = '#ff2b4e'; circ(roseStand.x, roseStand.y - rW * 1.0, rW * 0.28);
+  ctx.fillStyle = '#ffd166'; circ(roseStand.x, roseStand.y - rW * 1.0, rW * 0.08);
+  ctx.fillStyle = 'rgba(215, 240, 255, 0.3)';
   ctx.beginPath();
-  ctx.moveTo(-0.05, -0.11); ctx.lineTo(-0.05, -0.24);
-  ctx.arc(0, -0.24, 0.05, Math.PI, 0);
-  ctx.lineTo(0.05, -0.11); ctx.closePath(); ctx.fill();
-  ctx.strokeStyle = 'rgba(235, 250, 255, 0.75)'; ctx.lineWidth = 0.014; ctx.stroke();
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)'; ctx.lineWidth = 0.012;
-  ctx.beginPath(); ctx.arc(0, -0.24, 0.04, Math.PI * 1.15, Math.PI * 1.55); ctx.stroke();
-  ctx.fillStyle = 'rgba(230, 245, 255, 0.9)'; circ(0, -0.3, 0.012);
-  ctx.restore();
+  ctx.arc(roseStand.x, roseStand.y - rW * 0.95, rW * 0.45, Math.PI, 0);
+  ctx.lineTo(roseStand.x + rW * 0.45, roseStand.y - rW * 0.5);
+  ctx.lineTo(roseStand.x - rW * 0.45, roseStand.y - rW * 0.5);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(240, 250, 255, 0.85)'; ctx.lineWidth = 1.2; ctx.stroke();
+  circ(roseStand.x, roseStand.y - rW * 1.45, rW * 0.1);
 
-  // 12. 집 좌측 B-612 푯말
-  ctx.save();
-  ctx.translate(-0.43, 0);
-  ctx.strokeStyle = '#8a5a35'; ctx.lineWidth = 0.022; line(0, 0, 0, -0.18);
-  ctx.fillStyle = '#e8d5b5'; ctx.fillRect(-0.08, -0.24, 0.16, 0.08);
-  ctx.strokeStyle = '#997350'; ctx.lineWidth = 0.01; ctx.strokeRect(-0.08, -0.24, 0.16, 0.08);
-  ctx.font = 'bold 0.045px sans-serif';
+  // 11. B-612 푯말
+  const sPost = pt(-hw - 0.12, 0, 0.08);
+  const sTop = pt(-hw - 0.12, 0.18, 0.08);
+  ctx.strokeStyle = '#8a5a35'; ctx.lineWidth = 2;
+  line(sPost.x, sPost.y, sTop.x, sTop.y);
+  ctx.fillStyle = '#eddac0';
+  const sbW = clamp(R * 0.05, 16, 32), sbH = sbW * 0.5;
+  ctx.fillRect(sTop.x - sbW / 2, sTop.y - sbH, sbW, sbH);
+  ctx.strokeStyle = '#997350'; ctx.lineWidth = 1;
+  ctx.strokeRect(sTop.x - sbW / 2, sTop.y - sbH, sbW, sbH);
+  ctx.font = `bold ${Math.round(sbH * 0.65)}px sans-serif`;
   ctx.fillStyle = '#6a472d';
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText('B-612', 0, -0.2);
-  ctx.restore();
+  ctx.fillText('B-612', sTop.x, sTop.y - sbH / 2);
 }
 
 function drawBoy(c, t) {
+  if (c.homeState === 'inside') return; // 집 안에 있으면 실외에서는 숨김
   const run = c.speed > 0.02, sw = run ? Math.sin(c.phase) : 0;
   const bob = run ? Math.abs(Math.cos(c.phase)) * 0.035 : Math.sin(t * 2.2) * 0.008;
   ctx.fillStyle = 'rgba(20,30,40,0.24)'; ell(0, 0, 0.24 * (1 - c.jump * 0.9), 0.055);
   ctx.scale(c.face, 1); ctx.translate(0, -c.jump - bob);
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
+  if (c.homeState === 'entering') {
+    const s = 1 - c.enterT * 0.45;
+    ctx.scale(s, s);
+    ctx.globalAlpha = Math.max(0, 1 - c.enterT * 0.7);
+  } else if (c.homeState === 'exiting') {
+    const s = 0.55 + c.exitT * 0.45;
+    ctx.scale(s, s);
+    ctx.globalAlpha = Math.min(1, 0.3 + c.exitT * 0.7);
+  }
 
   // 바람에 날리는 목도리
   const fl = Math.sin(t * 7 + c.phase * 0.3) * 0.045, back = run ? 0.16 : 0;
@@ -861,8 +1194,12 @@ function drawBoy(c, t) {
 }
 
 function drawDog(c, t) {
-  const run = c.speed > 0.02, sw = run ? Math.sin(c.phase) : 0;
-  const bob = run ? Math.abs(Math.cos(c.phase)) * 0.04 : 0;
+  if (!c.smoothSpeed) c.smoothSpeed = 0;
+  c.smoothSpeed = lerp(c.smoothSpeed, c.speed, 0.18);
+  const run = c.smoothSpeed > 0.02;
+  const swAmp = clamp(c.smoothSpeed / (c.base || 0.52), 0, 1);
+  const sw = Math.sin(c.phase) * swAmp;
+  const bob = run ? Math.abs(Math.cos(c.phase)) * 0.04 * swAmp : 0;
   ctx.fillStyle = 'rgba(20,30,40,0.22)'; ell(0, 0, 0.36 * (1 - c.jump * 0.8), 0.06);
   ctx.scale(c.face, 1); ctx.translate(0, -c.jump - bob);
   ctx.lineCap = 'round';
@@ -887,8 +1224,13 @@ function drawDog(c, t) {
 }
 
 function drawCat(c, t) {
-  const run = c.speed > 0.02, sw = run ? Math.sin(c.phase) : 0;
-  const bob = run ? Math.abs(Math.cos(c.phase)) * 0.035 : 0;
+  // 걸을 때 및 정지 시 속도를 부드럽게 감쇠하여 다리가 파르르 떨리는 현상 완전 해결
+  if (!c.smoothSpeed) c.smoothSpeed = 0;
+  c.smoothSpeed = lerp(c.smoothSpeed, c.speed, 0.18);
+  const run = c.smoothSpeed > 0.02;
+  const swAmp = clamp(c.smoothSpeed / (c.base || 0.44), 0, 1);
+  const sw = Math.sin(c.phase) * swAmp;
+  const bob = run ? Math.abs(Math.cos(c.phase)) * 0.035 * swAmp : 0;
   ctx.fillStyle = 'rgba(20,30,40,0.22)'; ell(0, 0, 0.32 * (1 - c.jump * 0.8), 0.055);
   ctx.scale(c.face, 1); ctx.translate(0, -c.jump - bob);
   ctx.lineCap = 'round';
@@ -944,13 +1286,17 @@ function drawGlobeScene(t, dt) {
   };
   for (const f of flowers) add(f.p, R * 0.085 * f.s, drawFlower, f);
   for (const tr of trees) add(tr.p, R * 0.3 * tr.s, drawTree, tr);
-  add(house.p, R * 0.45, drawHouse, house);
+  add(house.p, R * 0.44, drawHouse3D, house);
   add(cat.p, R * 0.3, drawCat, cat);
   add(dog.p, R * 0.33, drawDog, dog);
-  add(boy.p, R * 0.4, drawBoy, boy);
+  if (boy.homeState !== 'inside') add(boy.p, R * 0.4, drawBoy, boy);
   items.sort((a, b) => a.v[2] - b.v[2]);
 
   const drawItem = (it) => {
+    if (it.fn === drawHouse3D) {
+      drawHouse3D(t, dt);
+      return;
+    }
     const v = it.v;
     let ux = v[0], uy = v[1] + 0.6 * Math.max(0, v[2]);
     const l = Math.hypot(ux, uy);
@@ -975,8 +1321,9 @@ function worldUpdate(dt, t) {
   boyUpdate(dt, t);
   animalUpdate(dog, dt);
   animalUpdate(cat, dt);
-  // 집 주변을 지나갈 때 부드럽게 돌아가도록 거리 유지
+  // 집 주변을 지나갈 때 부드럽게 돌아가도록 거리 유지 (집에 드나드는 중이거나 안일 땐 제외)
   for (const c of [boy, dog, cat]) {
+    if (c === boy && (boy.homeState === 'entering' || boy.homeState === 'inside' || boy.homeState === 'exiting')) continue;
     const gap = angleBetween(c.p, house.p);
     if (gap < 0.16) {
       const k = dot(c.p, house.p);
@@ -991,7 +1338,13 @@ function worldUpdate(dt, t) {
   }
   for (const c of [boy, dog, cat]) {
     const hv = mulMV(M, c.h);
-    if (c.speed > 0.02 && Math.abs(hv[0]) > 0.18) c.face = hv[0] > 0 ? 1 : -1;
+    if (!c.faceTimer) c.faceTimer = 0;
+    c.faceTimer -= dt;
+    // 방향 전환에 쿨다운과 임계값을 두어 좌우로 파르르 떠는 현상 방지
+    if (c.faceTimer <= 0 && (c.smoothSpeed || c.speed) > 0.04) {
+      if (hv[0] > 0.24 && c.face !== 1) { c.face = 1; c.faceTimer = 0.3; }
+      else if (hv[0] < -0.24 && c.face !== -1) { c.face = -1; c.faceTimer = 0.3; }
+    }
   }
   // 카메라가 아이를 부드럽게 따라간다 → 지구가 굴러가는 것처럼 보인다
   const vB = mulMV(M, boy.p), ang = angleBetween(vB, BOY_VIEW);
@@ -1102,6 +1455,28 @@ document.querySelectorAll('.dpad button').forEach((b) => {
   const up = () => keys.delete(k);
   b.addEventListener('pointerdown', down);
   b.addEventListener('pointerup', up); b.addEventListener('pointerleave', up); b.addEventListener('pointercancel', up);
+});
+
+// 집 클릭 시 어린왕자 출입 인터랙션
+canvas.addEventListener('click', (e) => {
+  if (panelOpen || isTyping(e.target)) return;
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  const v_h = mulMV(M, house.p);
+  if (v_h[2] < -0.2) return;
+  const hx = view.cx + v_h[0] * view.R, hy = view.cy - v_h[1] * view.R;
+  const d = Math.hypot(mx - hx, my - hy);
+  if (d < view.R * 0.28) {
+    if (boy.homeState === 'inside') {
+      boy.homeState = 'exiting';
+      boy.exitT = 0;
+      house.targetDoor = 1;
+      toast('어린왕자가 집 밖으로 나와요!');
+    } else {
+      boy.homeState = 'going_home';
+      toast('어린왕자가 집으로 들어가요!');
+    }
+  }
 });
 
 /* =========================================================
